@@ -47,3 +47,15 @@ Whitelist(ID) > Blacklist(ID) > Whitelist(File) > Blacklist(File)
 ## License
 
 [MIT](LICENSE)
+
+---
+
+## Unofficial Skyrim 1.7.104 compatibility branch
+
+This fork's `skyrim-1.7.104` branch is an **unofficial compatibility port** of Ammo Patcher, originally created by **JudahJL**. The build was tested locally with SkyrimSE.exe 1.7.104.0 and SKSE64 2.3.1, including SKSE Menu Framework integration and infinite ammo.
+
+**Known issue:** In-game settings changed through SKSE Menu Framework sometimes do not apply immediately or consistently. Restarting Skyrim and applying the settings again helped in local testing, but this behavior has not been fully diagnosed. Compatibility with other installations is not guaranteed.
+
+**Transparency:** AI assistance was used to adapt and recompile the source and to work on Address Library / CommonLibSSE-NG compatibility. The resulting DLL was tested by the fork maintainer in-game. Credit for the original mod remains with [JudahJL](https://github.com/JudahJL/Ammo-Patcher).
+
+See [PORT_1.7.104.md](PORT_1.7.104.md) for technical details, test scope and build caveats.

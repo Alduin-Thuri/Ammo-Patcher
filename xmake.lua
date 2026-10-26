@@ -6,7 +6,7 @@ includes ("lib/commonlibsse-ng")
 
 -- set project
 set_project("Ammo_Patcher")
-set_version("3.0.0")
+set_version("3.0.1")
 set_license("Apache-2.0")
 
 -- set defaults
@@ -42,7 +42,8 @@ target("Ammo_Patcher")
         description = "A simple SKSE plugin built with CommonLibSSE-NG to patch AMMO"
     })
 
-    -- add src files
+    -- Restore original SKSE Menu Framework integration.
+    -- Preserve the existing CommonLibSSE-NG / Address Library fixes.
     add_files("src/**.cpp")
     add_headerfiles("include/**.h")
     add_includedirs("include")

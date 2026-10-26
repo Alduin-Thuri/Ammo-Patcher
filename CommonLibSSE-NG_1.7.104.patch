@@ -1,0 +1,272 @@
+diff --git a/include/REL/ID.h b/include/REL/ID.h
+index cb3eb7e23..7da1e6bea 100644
+--- a/include/REL/ID.h
++++ b/include/REL/ID.h
+@@ -65,6 +65,7 @@ namespace REL
+ 		{
+ 			SSEv1,
+ 			SSEv2,
++			SSEv5,
+ 			VR
+ 		};
+ 
+@@ -81,9 +82,19 @@ namespace REL
+ 			explicit Offset2ID(ExecutionPolicy&& a_policy)
+ 				requires(std::is_execution_policy_v<std::decay_t<ExecutionPolicy>>)
+ 			{
+-				const std::span<const mapping_t> id2offset = IDDatabase::get()._id2offset;
+-				_offset2id.reserve(id2offset.size());
+-				_offset2id.insert(_offset2id.begin(), id2offset.begin(), id2offset.end());
++				const auto& db = IDDatabase::get();
++				if (db._loadedFormat == Format::SSEv5) {
++					_offset2id.reserve(db._id2offsetDense.size());
++					for (std::size_t id = 0; id < db._id2offsetDense.size(); ++id) {
++						if (db._id2offsetDense[id] != 0) {
++							_offset2id.push_back({ static_cast<std::uint64_t>(id), db._id2offsetDense[id] });
++						}
++					}
++				} else {
++					const std::span<const mapping_t> id2offset = db._id2offset;
++					_offset2id.reserve(id2offset.size());
++					_offset2id.insert(_offset2id.begin(), id2offset.begin(), id2offset.end());
++				}
+ 				std::sort(a_policy, _offset2id.begin(), _offset2id.end(), [](auto&& a_lhs, auto&& a_rhs) {
+ 					return a_lhs.offset < a_rhs.offset;
+ 				});
+@@ -153,6 +164,8 @@ namespace REL
+ 				return _instance.load_file(a_filePath.data(), a_version, 1, false);
+ 			case Format::SSEv2:
+ 				return _instance.load_file(a_filePath.data(), a_version, 2, false);
++			case Format::SSEv5:
++				return _instance.load_file(a_filePath.data(), a_version, 5, false);
+ #	ifdef ENABLE_SKYRIM_VR
+ 			case Format::VR:
+ 				return _instance.load_csv(a_filePath.data(), a_version, false);
+@@ -171,32 +184,26 @@ namespace REL
+ 
+ 		[[nodiscard]] inline std::size_t id2offset(std::uint64_t a_id) const
+ 		{
+-			mapping_t  elem{ a_id, 0 };
+-			const auto it = std::lower_bound(
+-				_id2offset.begin(),
+-				_id2offset.end(),
+-				elem,
+-				[](auto&& a_lhs, auto&& a_rhs) {
+-					return a_lhs.id < a_rhs.id;
+-				});
+-
+-			bool failed = false;
+-			if (it == _id2offset.end()) {
+-				failed = true;
+-			} else if SKYRIM_REL_VR_CONSTEXPR (Module::IsVR()) {
+-				if (it->id != a_id) {
+-					failed = true;
+-				}
+-			}
+-			if (failed) {
+-				stl::report_and_fail(
+-					std::format(
++			if (_loadedFormat == Format::SSEv5) {
++				if (a_id >= _id2offsetDense.size() || _id2offsetDense[a_id] == 0) {
++					stl::report_and_fail(std::format(
+ 						"Failed to find the id within the address library: {}\n"
+-						"This means this script extender plugin is incompatible with the address "
+-						"library for this version of the game, and thus does not support it."sv,
++						"This means this script extender plugin is incompatible with the address library for this version of the game, and thus does not support it."sv,
+ 						a_id));
++				}
++				return static_cast<std::size_t>(_id2offsetDense[a_id]);
+ 			}
+ 
++			mapping_t elem{ a_id, 0 };
++			const auto it = std::lower_bound(_id2offset.begin(), _id2offset.end(), elem, [](auto&& a_lhs, auto&& a_rhs) {
++				return a_lhs.id < a_rhs.id;
++			});
++			if (it == _id2offset.end() || it->id != a_id) {
++				stl::report_and_fail(std::format(
++					"Failed to find the id within the address library: {}\n"
++					"This means this script extender plugin is incompatible with the address library for this version of the game, and thus does not support it."sv,
++					a_id));
++			}
+ 			return static_cast<std::size_t>(it->offset);
+ 		}
+ 
+@@ -220,9 +227,12 @@ namespace REL
+ 				_stream(a_filename.data(), a_mode)
+ 			{
+ 				if (!_stream.is_open()) {
+-					stl::report_and_fail("failed to open address library file");
+-				}
+-
++                    stl::report_and_fail(
++                         std::format(
++                             "failed to open address library file:\n{}",
++                             stl::utf16_to_utf8(a_filename).value_or("<unknown filename>"s)));
++               }
++			   
+ 				_stream.exceptions(std::ios::badbit | std::ios::failbit | std::ios::eofbit);
+ 			}
+ 
+@@ -293,6 +303,31 @@ namespace REL
+ 			std::int32_t _addressCount{ 0 };
+ 		};
+ 
++		class header_v5_t
++		{
++		public:
++			void read(istream_t& a_in)
++			{
++				std::uint32_t version[4]{};
++				a_in.readin(version);
++				char name[64]{};
++				a_in.readin(name);
++				a_in.readin(_pointerSize);
++				a_in.readin(_dataFormat);
++				a_in.readin(_offsetCount);
++				for (std::size_t i = 0; i < std::extent_v<decltype(version)>; ++i) {
++					_version[i] = static_cast<std::uint16_t>(version[i]);
++				}
++			}
++			[[nodiscard]] std::size_t offset_count() const noexcept { return static_cast<std::size_t>(_offsetCount); }
++			[[nodiscard]] Version version() const noexcept { return _version; }
++		private:
++			Version _version;
++			std::int32_t _pointerSize{ 0 };
++			std::int32_t _dataFormat{ 0 };
++			std::int32_t _offsetCount{ 0 };
++		};
++
+ 		IDDatabase() = default;
+ 		IDDatabase(const IDDatabase&) = delete;
+ 		IDDatabase(IDDatabase&&) = delete;
+@@ -320,7 +355,7 @@ namespace REL
+ 							std::format("Data/SKSE/Plugins/versionlib-{}.bin"sv, version.string()) :
+ 							std::format("Data/SKSE/Plugins/version-{}.bin"sv, version.string()))
+ 						.value_or(L"<unknown filename>"s);
+-				load_file(filename, version, Module::IsAE() ? 2 : 1, true);
++				load_file(filename, version, 0, true);
+ #ifdef ENABLE_SKYRIM_VR
+ 			}
+ #endif
+@@ -421,6 +456,9 @@ namespace REL
+ 		{
+ 			_mmap.close();
+ 			_id2offset = {};
++			_id2offsetDense = {};
++			_id2offsetDenseStorage.clear();
++			_loadedFormat = Format::SSEv1;
+ 		}
+ 
+ 		static IDDatabase              _instance;
+@@ -428,6 +466,9 @@ namespace REL
+ 		static inline std::mutex       _initLock;
+ 		detail::memory_map             _mmap;
+ 		std::span<mapping_t>           _id2offset;
++		std::span<std::uint32_t>       _id2offsetDense;
++		std::vector<std::uint32_t>    _id2offsetDenseStorage;
++		Format                         _loadedFormat{ Format::SSEv1 };
+ 
+ #ifdef ENABLE_SKYRIM_VR
+ 		Version _vrAddressLibraryVersion;
+diff --git a/include/REL/Module.h b/include/REL/Module.h
+index d7c2c3b63..f2e14b986 100644
+--- a/include/REL/Module.h
++++ b/include/REL/Module.h
+@@ -169,6 +169,7 @@ namespace REL
+ 					_instance._runtime = Runtime::VR;
+ 					break;
+ 				case 6:
++				case 7:
+ 					_instance._runtime = Runtime::AE;
+ 					break;
+ 				default:
+@@ -341,6 +342,7 @@ namespace REL
+ 					_runtime = Runtime::VR;
+ 					break;
+ 				case 6:
++				case 7:
+ 					_runtime = Runtime::AE;
+ 					break;
+ 				default:
+diff --git a/src/REL/ID.cpp b/src/REL/ID.cpp
+index 5ea2a2c6a..06a2272ee 100644
+--- a/src/REL/ID.cpp
++++ b/src/REL/ID.cpp
+@@ -97,8 +97,45 @@ namespace REL
+ 	{
+ 		try {
+ 			istream_t in(a_filename.data(), std::ios::in | std::ios::binary);
+-			header_t  header;
+-			header.read(in, a_formatVersion);
++			std::int32_t format{};
++			in.readin(format);
++
++			if (a_formatVersion != 0 && format != a_formatVersion) {
++				return stl::report_and_error(std::format("Unsupported address library format: {}"sv, format), a_failOnError);
++			}
++
++			if (format == 5) {
++				header_v5_t header;
++				header.read(in);
++				if (header.version() != a_version) {
++					return stl::report_and_error("version mismatch"sv, a_failOnError);
++				}
++
++				// Keep format-5 offsets private to this plugin.  Shared mappings
++				// can collide with other SKSE plugins using a different layout.
++				const auto count = header.offset_count();
++				if (count == 0 || count > 10000000) {
++					return stl::report_and_error("invalid format-5 address count"sv, a_failOnError);
++				}
++				_id2offsetDenseStorage.resize(count);
++				for (auto& offset : _id2offsetDenseStorage) {
++					in.readin(offset);
++				}
++				_id2offsetDense = _id2offsetDenseStorage;
++				_loadedFormat = Format::SSEv5;
++				return true;
++			}
++
++			if (format != 1 && format != 2) {
++				return stl::report_and_error(std::format(
++					"Unsupported address library format: {}\nThis script extender plugin does not support this address library format."sv,
++					format), a_failOnError);
++			}
++
++			// header_t expects to read the format itself, so reopen from the beginning.
++			istream_t inV2(a_filename.data(), std::ios::in | std::ios::binary);
++			header_t header;
++			header.read(inV2, static_cast<std::uint8_t>(format));
+ 			if (header.version() != a_version) {
+ 				return stl::report_and_error("version mismatch"sv, a_failOnError);
+ 			}
+@@ -110,26 +147,23 @@ namespace REL
+ 				_id2offset = { static_cast<mapping_t*>(_mmap.data()), header.address_count() };
+ 			} else if (_mmap.create(mapname, byteSize)) {
+ 				_id2offset = { static_cast<mapping_t*>(_mmap.data()), header.address_count() };
+-				unpack_file(in, header, a_failOnError);
++				unpack_file(inV2, header, a_failOnError);
+ 				std::sort(_id2offset.begin(), _id2offset.end(), [](auto&& a_lhs, auto&& a_rhs) {
+ 					return a_lhs.id < a_rhs.id;
+ 				});
+ 			} else {
+ 				return stl::report_and_error("failed to create shared mapping"sv, a_failOnError);
+ 			}
++			_loadedFormat = format == 1 ? Format::SSEv1 : Format::SSEv2;
+ 		} catch (const std::system_error&) {
+ 			return stl::report_and_error(
+ 				std::format(
+ 					"Failed to locate an appropriate address library with the path: {}\n"
+-					"This means you are missing the address library for this specific version of "
+-					"the game. Please continue to the mod page for address library to download "
+-					"an appropriate version. If one is not available, then it is likely that "
+-					"address library has not yet added support for this version of the game."sv,
++					"This means you are missing the address library for this specific version of the game."sv,
+ 					stl::utf16_to_utf8(a_filename).value_or("<unknown filename>"s)),
+ 				a_failOnError);
+ 			return false;
+ 		}
+-
+ 		return true;
+ 	}
+ 

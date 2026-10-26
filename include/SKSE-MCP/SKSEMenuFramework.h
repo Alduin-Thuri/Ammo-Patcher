@@ -15,7 +15,14 @@
 // NOLINTBEGIN(*-redundant-void-arg, *-reserved-identifier, *-pro-type-reinterpret-cast,
 // *-use-using, *-avoid-c-arrays, *-avoid-return-with-void-value)
 
-static auto menuFramework{ GetModuleHandleW(L"SKSEMenuFramework") };  // NOLINT(*-err58-cpp)
+// Resolve the framework lazily: SKSE plugins can be loaded before SKSEMenuFramework.dll.
+inline HMODULE GetMenuFrameworkModule() {
+    return GetModuleHandleW(L"SKSEMenuFramework.dll");
+}
+
+#define menuFramework GetMenuFrameworkModule()
+
+
 #define MENU_WINDOW SKSEMenuFramework::Model::WindowInterface*
 
 namespace SKSEMenuFramework {
@@ -42,7 +49,8 @@ namespace SKSEMenuFramework {
 
         template<class T>
         auto GetFunction(LPCSTR name) -> T {
-            return reinterpret_cast<T>(GetProcAddress(menuFramework, name));
+            const auto module = GetMenuFrameworkModule();
+            return module ? reinterpret_cast<T>(GetProcAddress(module, name)) : nullptr;
         }
 
         inline std::string key;
